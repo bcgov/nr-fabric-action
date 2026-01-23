@@ -1,0 +1,97 @@
+#create-fabric-workspace.yml
+name: Create Fabric Workspace
+
+on:
+  workflow_call:
+    inputs:
+      branch-name:
+        required: true
+        type: string
+        description: 'Branch name (e.g., feature/my-feature)'
+      workspace-prefix:
+        required: true
+        type: string
+        description: 'Workspace name prefix'
+      capacity-id:
+        required: true
+        type: string
+        description: 'Fabric capacity ID'
+      git-branch:
+        required: true
+        type: string
+        description: 'Git branch to link to workspace'
+      fabric-connection-id:
+        required: true
+        type: string
+        description: 'Fabric Git connection ID'
+      workspace-admin-id:
+        required: true
+        type: string
+        description: 'Workspace admin user/group ID'
+    secrets:
+      AZURE_CREDENTIALS:
+        required: true
+    outputs:
+      workspace-id:
+        description: 'ID of the created workspace'
+        value: ${{ jobs.create-workspace.outputs.workspace-id }}
+
+jobs:
+  create-workspace:
+    name: Create Workspace
+    runs-on: ubuntu-latest
+    outputs:
+      workspace-id: ${{ steps.create-ws.outputs.WS_ID }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+      
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      
+      # ✅ CORRECTED: Fixed script paths
+      - name: Make scripts executable
+        run: |
+          chmod +x .github/workflows/scripts/create_workspace.sh
+          chmod +x .github/workflows/scripts/add_ws_admin.sh
+      
+      # ✅ CORRECTED: Fixed script path
+      - name: Create Workspace
+        id: create-ws
+        run: .github/workflows/scripts/create_workspace.sh
+        env:
+          BRANCH_NAME: ${{ inputs.branch-name }}
+          WS_PREFIX: ${{ inputs.workspace-prefix }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+          GIT_BRANCH: ${{ inputs.git-branch }}
+          CAPACITY_ID: ${{ inputs.capacity-id }}
+          FABRIC_CONNECTION_ID: ${{ inputs.fabric-connection-id }}
+      
+      # ✅ CORRECTED: Fixed script path
+      - name: Add Admin to Workspace
+        run: .github/workflows/scripts/add_ws_admin.sh
+        env:
+          WS_ID: ${{ steps.create-ws.outputs.WS_ID }}
+          WORKSPACE_ADMIN_EMAIL: ${{ inputs.workspace-admin-id }}
+      
+      - name: Summary
+        env:
+          WORKSPACE_ID: ${{ steps.create-ws.outputs.WS_ID }}
+          WORKSPACE_NAME: ${{ inputs.workspace-prefix }}-${{ inputs.branch-name }}
+        run: |
+          echo "### Workspace Creation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workspace Name**: $WORKSPACE_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workspace ID**: $WORKSPACE_ID" >> $GITHUB_STEP_SUMMARY
+          echo "- **Capacity ID**: ${{ inputs.capacity-id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Git Branch**: ${{ inputs.git-branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Access URL**: https://app.fabric.microsoft.com/groups/$WORKSPACE_ID" >> $GITHUB_STEP_SUMMARY

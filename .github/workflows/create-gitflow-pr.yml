@@ -1,0 +1,201 @@
+# create-gitflow-pr.yml
+name: Create GitFlow PR
+
+on:
+  workflow_call:
+    inputs:
+      source-branch:
+        required: true
+        type: string
+        description: 'Source branch for the PR'
+      target-branch:
+        required: true
+        type: string
+        description: 'Target branch for the PR'
+      auto-approve:
+        required: false
+        type: boolean
+        default: true
+        description: 'Auto-approve the PR'
+      auto-merge:
+        required: false
+        type: boolean
+        default: true
+        description: 'Enable auto-merge on the PR'
+      delete-source-branch:
+        required: false
+        type: boolean
+        default: false
+        description: 'Delete source branch after merge'
+      squash:
+        required: false
+        type: boolean
+        default: true
+        description: 'Squash commits when merging'
+    secrets:
+      github-token:
+        required: true
+        description: 'GitHub token for authentication'
+
+jobs:
+  create-and-manage-pr:
+    name: Create & Manage PR
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # CHANGE 2: Use secrets.github-token
+          token: ${{ secrets.github-token }}
+      
+      - name: Set up Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Get commit information
+        id: commit-info
+        run: |
+          TITLE=$(git log -1 --pretty=%s)
+          BODY=$(git log -1 --pretty=%B)
+          
+          if [[ -z "$TITLE" ]]; then
+            TITLE="Merge ${{ inputs.source-branch }} into ${{ inputs.target-branch }}"
+          fi
+          
+          if [[ -z "$BODY" ]]; then
+            BODY="$TITLE"
+          fi
+          
+          # Escape special characters for GitHub Actions
+          TITLE="${TITLE//'%'/'%25'}"
+          TITLE="${TITLE//$'\n'/'%0A'}"
+          TITLE="${TITLE//$'\r'/'%0D'}"
+          
+          BODY="${BODY//'%'/'%25'}"
+          BODY="${BODY//$'\n'/'%0A'}"
+          BODY="${BODY//$'\r'/'%0D'}"
+          
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "body=$BODY" >> $GITHUB_OUTPUT
+          echo "PR Title: $TITLE"
+      
+      - name: Check for existing PR
+        id: check-pr
+        env:
+          # CHANGE 3: Use secrets.github-token
+          GH_TOKEN: ${{ secrets.github-token }}
+        run: |
+          EXISTING_PR=$(gh pr list \
+            --head "${{ inputs.source-branch }}" \
+            --base "${{ inputs.target-branch }}" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          
+          if [[ -n "$EXISTING_PR" ]]; then
+            echo "pr_exists=true" >> $GITHUB_OUTPUT
+            echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
+            echo "Active PR already exists with number: $EXISTING_PR"
+          else
+            echo "pr_exists=false" >> $GITHUB_OUTPUT
+            echo "No existing PR found"
+          fi
+      
+      - name: Create Pull Request
+        if: steps.check-pr.outputs.pr_exists == 'false'
+        id: create-pr
+        env:
+          # CHANGE 4: Use secrets.github-token
+          GH_TOKEN: ${{ secrets.github-token }}
+        run: |
+          PR_NUMBER=$(gh pr create \
+            --head "${{ inputs.source-branch }}" \
+            --base "${{ inputs.target-branch }}" \
+            --title "${{ steps.commit-info.outputs.title }}" \
+            --body "${{ steps.commit-info.outputs.body }}" \
+            --json number \
+            --jq '.number')
+          
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "Pull request created with number: $PR_NUMBER"
+      
+      - name: Set PR number
+        id: pr-number
+        run: |
+          if [[ "${{ steps.check-pr.outputs.pr_exists }}" == "true" ]]; then
+            echo "number=${{ steps.check-pr.outputs.pr_number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ steps.create-pr.outputs.pr_number }}" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Wait for PR to be ready
+        run: sleep 2
+      
+      - name: Auto-approve PR
+        if: inputs.auto-approve == true
+        env:
+          # CHANGE 5: Use secrets.github-token
+          GH_TOKEN: ${{ secrets.github-token }}
+        run: |
+          echo "Auto-approving PR #${{ steps.pr-number.outputs.number }}..."
+          gh pr review "${{ steps.pr-number.outputs.number }}" --approve
+          echo "PR approved successfully!"
+      
+      - name: Enable auto-merge
+        if: inputs.auto-merge == true
+        env:
+          # CHANGE 6: Use secrets.github-token
+          GH_TOKEN: ${{ secrets.github-token }}
+        run: |
+          echo "Enabling auto-merge for PR #${{ steps.pr-number.outputs.number }}..."
+          
+          # Determine merge method
+          if [[ "${{ inputs.squash }}" == "true" ]]; then
+            MERGE_METHOD="SQUASH"
+          else
+            MERGE_METHOD="MERGE"
+          fi
+          
+          # Enable auto-merge using GraphQL API
+          PR_ID=$(gh pr view "${{ steps.pr-number.outputs.number }}" --json id --jq '.id')
+          
+          gh api graphql -f query='
+            mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
+              enablePullRequestAutoMerge(input: {
+                pullRequestId: $pullRequestId,
+                mergeMethod: $mergeMethod
+              }) {
+                pullRequest {
+                  autoMergeRequest {
+                    enabledAt
+                  }
+                }
+              }
+            }' -f pullRequestId="$PR_ID" -f mergeMethod="$MERGE_METHOD"
+          
+          echo "Auto-merge enabled with method: $MERGE_METHOD"
+      
+      - name: Add labels
+        env:
+          # CHANGE 7: Use secrets.github-token
+          GH_TOKEN: ${{ secrets.github-token }}
+        run: |
+          gh pr edit "${{ steps.pr-number.outputs.number }}" \
+            --add-label "gitflow" \
+            --add-label "automated" || true
+      
+      - name: Summary
+        run: |
+          echo "### PR Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR Number**: #${{ steps.pr-number.outputs.number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source Branch**: ${{ inputs.source-branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Branch**: ${{ inputs.target-branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-approve**: ${{ inputs.auto-approve }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-merge**: ${{ inputs.auto-merge }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Squash**: ${{ inputs.squash }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View PR: https://github.com/${{ github.repository }}/pull/${{ steps.pr-number.outputs.number }}" >> $GITHUB_STEP_SUMMARY

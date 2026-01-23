@@ -1,0 +1,188 @@
+name: Fabric Deployment Pipeline
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - dev
+      - test
+      - main
+  pull_request:
+    branches:
+      - dev
+      - test
+      - main
+  workflow_dispatch:
+
+env:
+  # WS_PREFIX: feat
+  
+  # Ensure these are using 'vars', NOT 'secrets'
+  DEV_CAPACITY_ID: ${{ vars.DEV_CAPACITY_ID }}
+  TEST_CAPACITY_ID: ${{ vars.TEST_CAPACITY_ID }}
+  PROD_CAPACITY_ID: ${{ vars.PROD_CAPACITY_ID }}
+  
+  DEV_WORKSPACE_ID: ${{ vars.DEV_WORKSPACE_ID }}
+  TEST_WORKSPACE_ID: ${{ vars.TEST_WORKSPACE_ID }}
+  PROD_WORKSPACE_ID: ${{ vars.PROD_WORKSPACE_ID }}
+  
+  GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
+  
+  # If these are secrets, REMOVE them from here and pass them directly in the jobs
+  FABRIC_CONNECTION_ID: ${{ vars.FABRIC_CONNECTION_ID }}
+  WORKSPACE_ADMIN_ID: ${{ vars.WORKSPACE_ADMIN_ID }}
+
+jobs:
+  # ══════════════════════════════════════════════════════════════
+  # 1. Validate Service Principal Permissions (New Step)
+  # ══════════════════════════════════════════════════════════════
+  check-spn-permissions:
+    name: '1. Validate SPN Permissions'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make script executable
+        run: chmod +x ./deployments/spn_evaluator.sh
+
+      - name: Run SPN Evaluator
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          ./deployments/spn_evaluator.sh --output table
+
+
+  # ══════════════════════════════════════════════════════════════
+  # 0. Create feature workspace
+  # ══════════════════════════════════════════════════════════════
+  create-feature-workspace:
+    name: Create Feature Workspace
+    needs: check-spn-permissions  # <--- Added Dependency
+    if: startsWith(github.ref, 'refs/heads/feature/')
+    uses: ./.github/workflows/create-fabric-workspace.yml
+    with:
+      branch-name: ${{ github.ref_name }}
+      workspace-prefix: feat
+      capacity-id: ${{ vars.DEV_CAPACITY_ID }}
+      git-branch: ${{ github.ref_name }}
+      fabric-connection-id: ${{ vars.FABRIC_CONNECTION_ID }}
+      workspace-admin-id: ${{ vars.WORKSPACE_ADMIN_ID }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+
+  # ══════════════════════════════════════════════════════════════
+  # 1. Feature → Dev: Create PR
+  # ══════════════════════════════════════════════════════════════
+  feature-to-dev-pr:
+    name: 'Feature → Dev PR'
+    needs: create-feature-workspace
+    if: startsWith(github.ref, 'refs/heads/feature/')
+    uses: ./.github/workflows/create-gitflow-pr.yml
+    with:
+      source-branch: ${{ github.ref_name }}
+      target-branch: dev
+      auto-approve: true
+      auto-merge: true
+      delete-source-branch: false
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ══════════════════════════════════════════════════════════════
+  # 2. Dev → Test: Create PR
+  # ══════════════════════════════════════════════════════════════
+  dev-to-test-pr:
+    name: 'Dev → Test PR'
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    uses: ./.github/workflows/create-gitflow-pr.yml
+    with:
+      source-branch: dev
+      target-branch: test
+      auto-approve: true
+      auto-merge: true
+      delete-source-branch: false
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ══════════════════════════════════════════════════════════════
+  # 3. Test → Main: Create PR
+  # ══════════════════════════════════════════════════════════════
+  test-to-main-pr:
+    name: 'Test → Main PR'
+    if: github.ref == 'refs/heads/test' && github.event_name == 'push'
+    uses: ./.github/workflows/create-gitflow-pr.yml
+    with:
+      source-branch: test
+      target-branch: main
+      auto-approve: false
+      auto-merge: false
+      delete-source-branch: false
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ══════════════════════════════════════════════════════════════
+  # 4. Deploy to Dev Workspace
+  # ══════════════════════════════════════════════════════════════
+  deploy-to-dev:
+    name: Deploy to Dev
+    needs: check-spn-permissions  # <--- Added Dependency
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    uses: ./.github/workflows/update-workspace-git.yml
+    with:
+      workspace-id: ${{ vars.DEV_WORKSPACE_ID }}
+      git-branch: dev
+    secrets:
+      azure-credentials: ${{ secrets.AZURE_CREDENTIALS }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+  # ══════════════════════════════════════════════════════════════
+  # 5. Deploy to Test Workspace
+  # ══════════════════════════════════════════════════════════════
+  deploy-to-test:
+    name: Deploy to Test
+    needs: check-spn-permissions  # <--- Added Dependency
+    if: github.ref == 'refs/heads/test' && github.event_name == 'push'
+    uses: ./.github/workflows/update-workspace-git.yml
+    with:
+      workspace-id: ${{ vars.TEST_WORKSPACE_ID }}
+      git-branch: test
+    secrets:
+      azure-credentials: ${{ secrets.AZURE_CREDENTIALS }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+  # ══════════════════════════════════════════════════════════════
+  # 6. Deploy to Production Workspace
+  # ══════════════════════════════════════════════════════════════
+  deploy-to-prod:
+    name: Deploy to Production
+    needs: check-spn-permissions  # <--- Added Dependency
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: ./.github/workflows/update-workspace-git.yml
+    with:
+      workspace-id: ${{ vars.PROD_WORKSPACE_ID }}
+      git-branch: main
+    secrets:
+      azure-credentials: ${{ secrets.AZURE_CREDENTIALS }}
+      tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+      client-id: ${{ secrets.AZURE_CLIENT_ID }}
+      client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+  # # ══════════════════════════════════════════════════════════════
+  # # 7. Delete Feature Workspace
+  # # ══════════════════════════════════════════════════════════════
+  # delete-feature-workspace:
+  #   name: Delete Feature Workspace
+  #   needs: [test-to-main-pr]
+  #   if: startsWith(github.ref, 'refs/heads/feature/')
+  #   uses: ./.github/workflows/delete-workspace.yml
+  #   with:
+  #     branch-name: ${{ github.ref_name }}
+  #     workspace-prefix: feat
+  #   secrets:
+  #     AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
