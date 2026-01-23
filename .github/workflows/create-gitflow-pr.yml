@@ -108,19 +108,20 @@ jobs:
         if: steps.check-pr.outputs.pr_exists == 'false'
         id: create-pr
         env:
-          # CHANGE 4: Use secrets.github-token
           GH_TOKEN: ${{ secrets.github-token }}
         run: |
-          PR_NUMBER=$(gh pr create \
+          # 1. Create the PR and capture the URL output
+          PR_URL=$(gh pr create \
             --head "${{ inputs.source-branch }}" \
             --base "${{ inputs.target-branch }}" \
             --title "${{ steps.commit-info.outputs.title }}" \
-            --body "${{ steps.commit-info.outputs.body }}" \
-            --json number \
-            --jq '.number')
+            --body "${{ steps.commit-info.outputs.body }}")
+          
+          # 2. Extract the number from the URL (everything after the last slash)
+          PR_NUMBER=${PR_URL##*/}
           
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "Pull request created with number: $PR_NUMBER"
+          echo "Pull request created: $PR_URL (Number: $PR_NUMBER)"
       
       - name: Set PR number
         id: pr-number
