@@ -31,11 +31,9 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
       
-      # ✅ CORRECTED: Fixed script path
       - name: Make script executable
         run: chmod +x .github/workflows/scripts/delete_workspace.sh
       
-      # ✅ CORRECTED: Fixed script path
       - name: Delete Workspace
         run: .github/workflows/scripts/delete_workspace.sh
         env:

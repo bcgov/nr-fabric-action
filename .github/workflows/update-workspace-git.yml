@@ -12,18 +12,15 @@ on:
         required: true
         type: string
         description: 'Git branch to pull from'
+    secrets:
       tenant-id:
         required: true
-        type: string
-        description: 'Azure AD Tenant ID'
       client-id:
         required: true
-        type: string
-        description: 'Service Principal Client ID'
       client-secret:
         required: true
-        type: string
-        description: 'Service Principal Client Secret'
+      azure-credentials:
+        required: true
 
 jobs:
   update-workspace:
