@@ -19,8 +19,6 @@ on:
         required: true
       client-secret:
         required: true
-      azure-credentials:
-        required: true
 
 jobs:
   update-workspace:
