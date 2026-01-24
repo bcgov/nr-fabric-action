@@ -12,6 +12,10 @@ on:
         required: true
         type: string
         description: 'Git branch to pull from'
+      fabric-connection-id:
+        required: true
+        type: string
+        description: 'Fabric GitHub connection ID'
     secrets:
       tenant-id:
         required: true
@@ -116,10 +120,15 @@ jobs:
               "repositoryName": "${{ github.event.repository.name }}",
               "branchName": "${{ inputs.git-branch }}",
               "directoryName": "/"
+            },
+            "myGitCredentials": {
+              "source": "ConfiguredConnection",
+              "connectionId": "${{ inputs.fabric-connection-id }}"
             }
           }
           EOF
           )
+
 
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             "${FABRIC_API_URL}/workspaces/${{ inputs.workspace-id }}/git/connect" \

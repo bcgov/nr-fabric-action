@@ -132,6 +132,7 @@ jobs:
     uses: ./.github/workflows/update-workspace-git.yml
     with:
       workspace-id: ${{ vars.TEST_WORKSPACE_ID }}
+      fabric-connection-id: ${{ vars.FABRIC_CONNECTION_ID }}
       git-branch: test
     secrets:
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
