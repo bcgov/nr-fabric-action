@@ -294,24 +294,18 @@ jobs:
           fi
 
       - name: Update from Git
+        if: steps.init.outputs.required_action == 'UpdateFromGit'
         env:
           FABRIC_TOKEN: ${{ steps.get-token.outputs.token }}
         run: |
           set -euo pipefail
           FABRIC_API_URL="https://api.fabric.microsoft.com/v1"
 
-          echo "Updating workspace from Git branch: ${{ inputs.git-branch }}"
-
+          echo "Updating workspace from Git using initialization hashes..."
           PAYLOAD=$(cat <<EOF
           {
-            "remoteCommitHash": "latest",
-            "conflictResolution": {
-              "conflictResolutionType": "Workspace",
-              "conflictResolutionPolicy": "PreferWorkspace"
-            },
-            "options": {
-              "allowOverrideItems": true
-            }
+            "remoteCommitHash": "${{ steps.init.outputs.remote_commit_hash }}",
+            "workspaceHead": "${{ steps.init.outputs.workspace_head }}"
           }
           EOF
           )
@@ -326,10 +320,10 @@ jobs:
           BODY=$(echo "$RESPONSE" | sed '$d')
 
           if [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
-            echo "✓ Workspace updated from Git successfully"
+            echo "✓ UpdateFromGit accepted/succeeded"
             echo "$BODY" | jq '.' || echo "$BODY"
           else
-            echo "✗ Failed to update workspace from Git. HTTP Code: $HTTP_CODE"
+            echo "✗ UpdateFromGit failed. HTTP Code: $HTTP_CODE"
             echo "$BODY" | jq '.' || echo "$BODY"
             exit 1
           fi
