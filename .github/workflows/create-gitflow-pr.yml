@@ -1,4 +1,4 @@
-# create-gitflow-pr.yml
+# .github/workflows/create-gitflow-pr.yml
 name: Create GitFlow PR
 
 on:
@@ -7,194 +7,320 @@ on:
       source-branch:
         required: true
         type: string
-        description: 'Source branch for the PR'
+        description: "Source branch for the PR (head)"
       target-branch:
         required: true
         type: string
-        description: 'Target branch for the PR'
+        description: "Target branch for the PR (base)"
       auto-approve:
         required: false
         type: boolean
         default: true
-        description: 'Auto-approve the PR'
+        description: "Auto-approve the PR"
       auto-merge:
         required: false
         type: boolean
         default: true
-        description: 'Enable auto-merge on the PR'
+        description: "Enable auto-merge on the PR"
       delete-source-branch:
         required: false
         type: boolean
         default: false
-        description: 'Delete source branch after merge'
+        description: "Delete source branch after merge"
       squash:
         required: false
         type: boolean
         default: true
-        description: 'Squash commits when merging'
+        description: "Squash commits when merging"
     secrets:
       github-token:
         required: true
-        description: 'GitHub token for authentication'
+        description: "GitHub token for authentication"
 
 jobs:
   create-and-manage-pr:
     name: Create & Manage PR
     runs-on: ubuntu-latest
-    
+
+    permissions:
+      contents: read
+      pull-requests: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # CHANGE 2: Use secrets.github-token
           token: ${{ secrets.github-token }}
-      
+
       - name: Set up Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-      
-      - name: Get commit information
-        id: commit-info
-        run: |
-          TITLE=$(git log -1 --pretty=%s)
-          BODY=$(git log -1 --pretty=%B)
-          
-          if [[ -z "$TITLE" ]]; then
-            TITLE="Merge ${{ inputs.source-branch }} into ${{ inputs.target-branch }}"
-          fi
-          
-          if [[ -z "$BODY" ]]; then
-            BODY="$TITLE"
-          fi
-          
-          # Escape special characters for GitHub Actions
-          TITLE="${TITLE//'%'/'%25'}"
-          TITLE="${TITLE//$'\n'/'%0A'}"
-          TITLE="${TITLE//$'\r'/'%0D'}"
-          
-          BODY="${BODY//'%'/'%25'}"
-          BODY="${BODY//$'\n'/'%0A'}"
-          BODY="${BODY//$'\r'/'%0D'}"
-          
-          echo "title=$TITLE" >> $GITHUB_OUTPUT
-          echo "body=$BODY" >> $GITHUB_OUTPUT
-          echo "PR Title: $TITLE"
-      
-      - name: Check for existing PR
-        id: check-pr
+
+      # ─────────────────────────────────────────────────────────────
+      # Robust "no changes" handling:
+      # - Validate branches exist
+      # - Fetch both refs explicitly
+      # - Compute ahead/behind counts
+      # - If ahead==0 -> SKIP gracefully (no failure)
+      # Also tolerates "already has an open PR" by reusing it.
+      # ─────────────────────────────────────────────────────────────
+      - name: Validate branches & detect changes
+        id: diff
         env:
-          # CHANGE 3: Use secrets.github-token
           GH_TOKEN: ${{ secrets.github-token }}
         run: |
+          set -euo pipefail
+
+          OWNER="${{ github.repository_owner }}"
+          REPO="${{ github.event.repository.name }}"
+          SRC="${{ inputs.source-branch }}"
+          TGT="${{ inputs.target-branch }}"
+
+          echo "Source: $SRC"
+          echo "Target: $TGT"
+
+          # Verify branches exist on remote (prevents GraphQL blank SHA errors)
+          if ! gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${OWNER}/${REPO}/branches/${SRC}" >/dev/null 2>&1; then
+            echo "ℹ Source branch not found: ${SRC}. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=Source branch not found: ${SRC}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${OWNER}/${REPO}/branches/${TGT}" >/dev/null 2>&1; then
+            echo "ℹ Target branch not found: ${TGT}. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=Target branch not found: ${TGT}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Fetch both branches so local git can diff accurately
+          git fetch --no-tags --prune origin \
+            "+refs/heads/${SRC}:refs/remotes/origin/${SRC}" \
+            "+refs/heads/${TGT}:refs/remotes/origin/${TGT}"
+
+          SRC_SHA=$(git rev-parse "origin/${SRC}")
+          TGT_SHA=$(git rev-parse "origin/${TGT}")
+
+          echo "Source SHA: $SRC_SHA"
+          echo "Target SHA: $TGT_SHA"
+
+          # Count commits ahead (source relative to target)
+          AHEAD=$(git rev-list --count "origin/${TGT}..origin/${SRC}" || echo "0")
+          BEHIND=$(git rev-list --count "origin/${SRC}..origin/${TGT}" || echo "0")
+
+          echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "src_sha=$SRC_SHA" >> "$GITHUB_OUTPUT"
+          echo "tgt_sha=$TGT_SHA" >> "$GITHUB_OUTPUT"
+
+          if [[ "$AHEAD" -eq 0 ]]; then
+            echo "ℹ No changes to merge (${SRC} is not ahead of ${TGT})."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=No commits between ${SRC} and ${TGT}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "skip_reason=" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing PR
+        id: check-pr
+        if: steps.diff.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.github-token }}
+        run: |
+          set -euo pipefail
+          OWNER="${{ github.repository_owner }}"
+          SRC="${{ inputs.source-branch }}"
+          TGT="${{ inputs.target-branch }}"
+
+          HEAD_REF="${OWNER}:${SRC}"
+
           EXISTING_PR=$(gh pr list \
-            --head "${{ inputs.source-branch }}" \
-            --base "${{ inputs.target-branch }}" \
+            --head "$HEAD_REF" \
+            --base "$TGT" \
             --state open \
             --json number \
-            --jq '.[0].number // empty')
-          
+            --jq '.[0].number // empty' || true)
+
           if [[ -n "$EXISTING_PR" ]]; then
-            echo "pr_exists=true" >> $GITHUB_OUTPUT
-            echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
-            echo "Active PR already exists with number: $EXISTING_PR"
+            echo "pr_exists=true" >> "$GITHUB_OUTPUT"
+            echo "pr_number=$EXISTING_PR" >> "$GITHUB_OUTPUT"
+            echo "Active PR already exists: #$EXISTING_PR"
           else
-            echo "pr_exists=false" >> $GITHUB_OUTPUT
+            echo "pr_exists=false" >> "$GITHUB_OUTPUT"
+            echo "pr_number=" >> "$GITHUB_OUTPUT"
             echo "No existing PR found"
           fi
-      
+
+      - name: Prepare PR title/body (file-based, safe)
+        id: commit-info
+        if: steps.diff.outputs.skip != 'true' && steps.check-pr.outputs.pr_exists == 'false'
+        run: |
+          set -euo pipefail
+          SRC="${{ inputs.source-branch }}"
+          TGT="${{ inputs.target-branch }}"
+
+          # Use the head commit message on the source branch
+          git checkout -q "origin/${SRC}"
+
+          TITLE=$(git log -1 --pretty=%s || true)
+          BODY=$(git log -1 --pretty=%B || true)
+
+          if [[ -z "${TITLE}" ]]; then
+            TITLE="Merge ${SRC} into ${TGT}"
+          fi
+          if [[ -z "${BODY}" ]]; then
+            BODY="${TITLE}"
+          fi
+
+          printf "%s" "$TITLE" > pr_title.txt
+          printf "%s\n" "$BODY" > pr_body.txt
+
       - name: Create Pull Request
-        if: steps.check-pr.outputs.pr_exists == 'false'
+        if: steps.diff.outputs.skip != 'true' && steps.check-pr.outputs.pr_exists == 'false'
         id: create-pr
         env:
           GH_TOKEN: ${{ secrets.github-token }}
         run: |
-          # 1. Create the PR and capture the URL output
+          set -euo pipefail
+          OWNER="${{ github.repository_owner }}"
+          SRC="${{ inputs.source-branch }}"
+          TGT="${{ inputs.target-branch }}"
+
+          HEAD_REF="${OWNER}:${SRC}"
+
+          echo "Creating PR: $HEAD_REF -> $TGT"
+
+          # Extra guard: sometimes GH returns "no commits" due to eventual consistency.
+          # If so, treat as SKIP instead of failing.
+          set +e
           PR_URL=$(gh pr create \
-            --head "${{ inputs.source-branch }}" \
-            --base "${{ inputs.target-branch }}" \
-            --title "${{ steps.commit-info.outputs.title }}" \
-            --body "${{ steps.commit-info.outputs.body }}")
-          
-          # 2. Extract the number from the URL (everything after the last slash)
-          PR_NUMBER=${PR_URL##*/}
-          
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "Pull request created: $PR_URL (Number: $PR_NUMBER)"
-      
-      - name: Set PR number
-        id: pr-number
-        run: |
-          if [[ "${{ steps.check-pr.outputs.pr_exists }}" == "true" ]]; then
-            echo "number=${{ steps.check-pr.outputs.pr_number }}" >> $GITHUB_OUTPUT
-          else
-            echo "number=${{ steps.create-pr.outputs.pr_number }}" >> $GITHUB_OUTPUT
+            --head "$HEAD_REF" \
+            --base "$TGT" \
+            --title "$(cat pr_title.txt)" \
+            --body-file pr_body.txt 2>&1)
+          RC=$?
+          set -e
+
+          if [[ $RC -ne 0 ]]; then
+            if echo "$PR_URL" | grep -qi "No commits between"; then
+              echo "ℹ GitHub reports no commits between branches. Skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "skip_reason=GitHub reports no commits between ${SRC} and ${TGT}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "✗ gh pr create failed:"
+            echo "$PR_URL"
+            exit 1
           fi
-      
-      - name: Wait for PR to be ready
-        run: sleep 2
-      
+
+          # Success path returns URL
+          PR_NUMBER="${PR_URL##*/}"
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "skip_reason=" >> "$GITHUB_OUTPUT"
+          echo "Pull request created: $PR_URL (Number: $PR_NUMBER)"
+
+      - name: Set PR number (or skip)
+        id: pr-number
+        if: steps.diff.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+
+          # If create-pr step decided to skip (eventual consistency no commits), exit cleanly
+          if [[ "${{ steps.create-pr.outputs.skip || 'false' }}" == "true" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=${{ steps.create-pr.outputs.skip_reason }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${{ steps.check-pr.outputs.pr_exists }}" == "true" ]]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "number=${{ steps.check-pr.outputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "number=${{ steps.create-pr.outputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Auto-approve PR
-        if: inputs.auto-approve == true
+        if: steps.diff.outputs.skip != 'true' && steps.pr-number.outputs.skip != 'true' && inputs.auto-approve == true
         env:
-          # CHANGE 5: Use secrets.github-token
           GH_TOKEN: ${{ secrets.github-token }}
         run: |
+          set -euo pipefail
           echo "Auto-approving PR #${{ steps.pr-number.outputs.number }}..."
           gh pr review "${{ steps.pr-number.outputs.number }}" --approve
-          echo "PR approved successfully!"
-      
+
       - name: Enable auto-merge
-        if: inputs.auto-merge == true
+        if: steps.diff.outputs.skip != 'true' && steps.pr-number.outputs.skip != 'true' && inputs.auto-merge == true
         env:
-          # CHANGE 6: Use secrets.github-token
           GH_TOKEN: ${{ secrets.github-token }}
         run: |
+          set -euo pipefail
+
           echo "Enabling auto-merge for PR #${{ steps.pr-number.outputs.number }}..."
-          
-          # Determine merge method
+
           if [[ "${{ inputs.squash }}" == "true" ]]; then
             MERGE_METHOD="SQUASH"
           else
             MERGE_METHOD="MERGE"
           fi
-          
-          # Enable auto-merge using GraphQL API
+
           PR_ID=$(gh pr view "${{ steps.pr-number.outputs.number }}" --json id --jq '.id')
-          
+
           gh api graphql -f query='
             mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod!) {
               enablePullRequestAutoMerge(input: {
                 pullRequestId: $pullRequestId,
                 mergeMethod: $mergeMethod
               }) {
-                pullRequest {
-                  autoMergeRequest {
-                    enabledAt
-                  }
-                }
+                pullRequest { number }
               }
             }' -f pullRequestId="$PR_ID" -f mergeMethod="$MERGE_METHOD"
-          
+
           echo "Auto-merge enabled with method: $MERGE_METHOD"
-      
+
       - name: Add labels
+        if: steps.diff.outputs.skip != 'true' && steps.pr-number.outputs.skip != 'true'
         env:
-          # CHANGE 7: Use secrets.github-token
           GH_TOKEN: ${{ secrets.github-token }}
         run: |
+          set -euo pipefail
           gh pr edit "${{ steps.pr-number.outputs.number }}" \
             --add-label "gitflow" \
             --add-label "automated" || true
-      
+
       - name: Summary
         run: |
           echo "### PR Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **PR Number**: #${{ steps.pr-number.outputs.number }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Source Branch**: ${{ inputs.source-branch }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Target Branch**: ${{ inputs.target-branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ahead (target..source)**: ${{ steps.diff.outputs.ahead || 'n/a' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Skip**: ${{ steps.diff.outputs.skip || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Skip Reason**: ${{ steps.diff.outputs.skip_reason || '' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # If we skipped due to no commits / missing branches
+          if [[ "${{ steps.diff.outputs.skip || 'false' }}" == "true" ]]; then
+            echo "No PR created." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # If we skipped because GH said no commits during create step
+          if [[ "${{ steps.pr-number.outputs.skip || 'false' }}" == "true" ]]; then
+            echo "No PR created: ${{ steps.pr-number.outputs.reason }}" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          echo "- **PR Number**: #${{ steps.pr-number.outputs.number }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Auto-approve**: ${{ inputs.auto-approve }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Auto-merge**: ${{ inputs.auto-merge }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Squash**: ${{ inputs.squash }}" >> $GITHUB_STEP_SUMMARY
