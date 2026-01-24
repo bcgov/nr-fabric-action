@@ -152,6 +152,80 @@ jobs:
             exit 1
           fi
 
+      - name: Initialize Git Connection
+        id: init
+        env:
+          FABRIC_TOKEN: ${{ steps.get-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          FABRIC_API_URL="https://api.fabric.microsoft.com/v1"
+          WS="${{ inputs.workspace-id }}"
+
+          echo "Initializing Git connection for workspace: $WS"
+
+          # Capture headers + body for LRO handling
+          HEADERS_FILE="$(mktemp)"
+          BODY_FILE="$(mktemp)"
+
+          HTTP_CODE=$(curl -sS -D "$HEADERS_FILE" -o "$BODY_FILE" -w "%{http_code}" -X POST \
+            "${FABRIC_API_URL}/workspaces/${WS}/git/initializeConnection" \
+            -H "Authorization: Bearer $FABRIC_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{}")
+
+          if [[ "$HTTP_CODE" == "200" ]]; then
+            echo "✓ Initialize completed (200)"
+            cat "$BODY_FILE" | jq .
+            echo "required_action=$(cat "$BODY_FILE" | jq -r '.requiredAction // empty')" >> "$GITHUB_OUTPUT"
+            echo "remote_commit_hash=$(cat "$BODY_FILE" | jq -r '.remoteCommitHash // empty')" >> "$GITHUB_OUTPUT"
+            echo "workspace_head=$(cat "$BODY_FILE" | jq -r '.workspaceHead // empty')" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$HTTP_CODE" == "202" ]]; then
+            OP_ID=$(grep -i '^x-ms-operation-id:' "$HEADERS_FILE" | awk '{print $2}' | tr -d '\r')
+            RETRY=$(grep -i '^retry-after:' "$HEADERS_FILE" | awk '{print $2}' | tr -d '\r')
+            [[ -z "$RETRY" ]] && RETRY=10
+
+            echo "....Initialize is running (operationId=$OP_ID). Polling every ${RETRY}s..."
+
+            # Poll LRO state
+            while true; do
+              STATE=$(curl -sS -X GET \
+                "${FABRIC_API_URL}/operations/${OP_ID}" \
+                -H "Authorization: Bearer $FABRIC_TOKEN" \
+                -H "Content-Type: application/json" | jq -r '.status')
+
+              echo "LRO status: $STATE"
+              if [[ "$STATE" == "Succeeded" ]]; then
+                break
+              elif [[ "$STATE" == "Failed" ]]; then
+                curl -sS -X GET "${FABRIC_API_URL}/operations/${OP_ID}" \
+                  -H "Authorization: Bearer $FABRIC_TOKEN" \
+                  -H "Content-Type: application/json" | jq .
+                exit 1
+              fi
+              sleep "$RETRY"
+            done
+
+            # Get LRO result (initializeConnection returns requiredAction + hashes)
+            RESULT=$(curl -sS -X GET \
+              "${FABRIC_API_URL}/operations/${OP_ID}/result" \
+              -H "Authorization: Bearer $FABRIC_TOKEN" \
+              -H "Content-Type: application/json")
+
+            echo "✓ Initialize result:"
+            echo "$RESULT" | jq .
+
+            echo "required_action=$(echo "$RESULT" | jq -r '.requiredAction // empty')" >> "$GITHUB_OUTPUT"
+            echo "remote_commit_hash=$(echo "$RESULT" | jq -r '.remoteCommitHash // empty')" >> "$GITHUB_OUTPUT"
+            echo "workspace_head=$(echo "$RESULT" | jq -r '.workspaceHead // empty')" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "✗ Initialize failed. HTTP $HTTP_CODE"
+          cat "$BODY_FILE" | jq . || cat "$BODY_FILE"
+          exit 1
 
       - name: Update Git Branch
         if: steps.git-status.outputs.git_connected != 'NotConnected'
