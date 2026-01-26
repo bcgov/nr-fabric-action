@@ -1,4 +1,4 @@
-# Fabric notebook source demo 2
+# Fabric notebook source
 
 # METADATA ********************
 
