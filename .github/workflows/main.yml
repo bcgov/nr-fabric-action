@@ -83,7 +83,7 @@ jobs:
     with:
       source-branch: ${{ github.ref_name }}
       target-branch: dev
-      auto-approve: true
+      auto-approve: false
       auto-merge: true
       delete-source-branch: false
     secrets:
@@ -117,7 +117,7 @@ jobs:
     with:
       source-branch: dev
       target-branch: test
-      auto-approve: true
+      auto-approve: false
       auto-merge: true
       delete-source-branch: false
     secrets:
