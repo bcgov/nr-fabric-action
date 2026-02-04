@@ -90,7 +90,7 @@ jobs:
           chmod +x ./.github/workflows/scripts/update_variables.sh
           ./.github/workflows/scripts/update_variables.sh \
             -p ${{ env.VAR_PREFIX }} \
-            -e dev \
+            -e DEV \
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
@@ -160,7 +160,7 @@ jobs:
           chmod +x ./.github/workflows/scripts/update_variables.sh
           ./.github/workflows/scripts/update_variables.sh \
             -p ${{ env.VAR_PREFIX }} \
-            -e test \
+            -e TEST \
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
@@ -229,7 +229,7 @@ jobs:
           chmod +x ./.github/workflows/scripts/update_variables.sh
           ./.github/workflows/scripts/update_variables.sh \
             -p ${{ env.VAR_PREFIX }} \
-            -e prod \
+            -e PROD \
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
