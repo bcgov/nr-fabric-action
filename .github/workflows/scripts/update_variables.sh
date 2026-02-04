@@ -54,8 +54,8 @@ parse_arguments() {
                 show_help
                 ;;
             *)
-                echo "Unknown option: $1"
-                echo "Use -h or --help for usage information"
+                echo "Unknown option: $1" >&2
+                echo "Use -h or --help for usage information" >&2
                 exit 1
                 ;;
         esac
@@ -64,24 +64,8 @@ parse_arguments() {
 
 validate_file_path() {
     if [[ -z "$FILE_PATH" ]]; then
-        echo "Error: File path is required. Use -f or --file to specify the path."
-        echo "Use -h or --help for usage information"
-        exit 1
-    fi
-}
-
-validate_github_cli() {
-    if ! command -v gh &> /dev/null; then
-        echo "Error: GitHub CLI (gh) is not installed."
-        echo "Please install it from: https://cli.github.com/"
-        exit 1
-    fi
-}
-
-validate_github_auth() {
-    if ! gh auth status &> /dev/null; then
-        echo "Error: GitHub CLI is not authenticated."
-        echo "Please run: gh auth login"
+        echo "Error: File path is required. Use -f or --file to specify the path." >&2
+        echo "Use -h or --help for usage information" >&2
         exit 1
     fi
 }
@@ -132,7 +116,7 @@ process_variables() {
             local clean_name=$(strip_prefix_from_name "$name")
             local escaped_value=$(escape_json_value "$value")
             json_vars=$(add_variable_to_json "$json_vars" "$clean_name" "$escaped_value")
-            echo "  Added: $clean_name"
+            echo "  Added: $clean_name" >&2
         fi
     done <<< "$filtered_vars"
     
@@ -151,7 +135,7 @@ create_fabric_json() {
 ensure_directory_exists() {
     local dir_path=$(dirname "$FILE_PATH")
     if [[ ! -d "$dir_path" ]]; then
-        echo "Creating directory: $dir_path"
+        echo "Creating directory: $dir_path" >&2
         mkdir -p "$dir_path"
     fi
 }
@@ -163,27 +147,25 @@ write_to_file() {
 
 display_summary() {
     local variable_count=$1
-    echo ""
-    echo "✓ Successfully wrote variables to: $FILE_PATH"
-    echo "  Total variables: $variable_count"
+    echo "" >&2
+    echo "✓ Successfully wrote variables to: $FILE_PATH" >&2
+    echo "  Total variables: $variable_count" >&2
 }
 
 main() {
     parse_arguments "$@"
     validate_file_path
-    validate_github_cli
-    validate_github_auth
     
-    echo "Fetching variables from GitHub..."
-    echo "Prefix: $PREFIX"
-    echo "Environment: $ENVIRONMENT"
-    echo "Output file: $FILE_PATH"
+    echo "Fetching variables from GitHub..." >&2
+    echo "Prefix: $PREFIX" >&2
+    echo "Environment: $ENVIRONMENT" >&2
+    echo "Output file: $FILE_PATH" >&2
     
     local filtered_vars=$(fetch_filtered_variables)
     
     if [[ -z "$filtered_vars" ]]; then
-        echo "Warning: No variables found with prefix '${PREFIX}_${ENVIRONMENT}_'"
-        echo "Creating empty variables.json file..."
+        echo "Warning: No variables found with prefix '${PREFIX}_${ENVIRONMENT}_'" >&2
+        echo "Creating empty variables.json file..." >&2
         filtered_vars=""
     fi
     
