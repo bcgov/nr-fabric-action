@@ -11,7 +11,6 @@ permissions:
   pull-requests: write
   issues: write
 
-
 env:
   WS_PREFIX: feat
   VAR_PREFIX: ENV_VARS
@@ -82,6 +81,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Update variables.json for Dev
         env:
@@ -94,7 +94,7 @@ jobs:
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
-      - name: Commit and push changes
+      - name: Commit and push variables.json only
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -106,23 +106,6 @@ jobs:
             git commit -m "chore: update variables.json for dev environment [skip ci]"
             git push
           fi
-
-  # ══════════════════════════════════════════════════════════════
-  # 3. Wait for Dev Approval
-  # ══════════════════════════════════════════════════════════════
-  # no approval step for dev deploys 
-  # wait-for-dev-approval:
-  #   name: "3. Wait for Dev Approval"
-  #   needs: [update-dev-variables]
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: trstringer/manual-approval@v1
-  #       with:
-  #         secret: ${{ github.TOKEN }}
-  #         approvers: ${{ env.APPROVER }}
-  #         minimum-approvals: 1
-  #         issue-title: "Deploy to Dev Environment"
-  #         issue-body: "Please approve deployment to Dev workspace"
 
   # ══════════════════════════════════════════════════════════════
   # 4. Deploy to Dev Workspace
@@ -141,17 +124,35 @@ jobs:
       client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
 
   # ══════════════════════════════════════════════════════════════
-  # 5. Update Variables for Test Environment
+  # 5. Merge to Dev Branch and Update Test Variables
   # ══════════════════════════════════════════════════════════════
   update-test-variables:
     name: "5. Update Test Variables"
     needs: [deploy-to-dev]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout dev branch
         uses: actions/checkout@v4
         with:
+          ref: dev
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge feature branch into dev (prefer ours on conflict)
+        run: |
+          git fetch origin ${{ github.ref_name }}
+          git merge origin/${{ github.ref_name }} --no-edit || {
+            # Handle all conflicts using "ours" strategy (prefer current branch - dev)
+            echo "Merge conflicts detected. Resolving with 'ours' strategy..."
+            git checkout --ours .
+            git add .
+            git commit --no-edit || true
+          }
 
       - name: Update variables.json for Test
         env:
@@ -164,18 +165,15 @@ jobs:
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
-      - name: Commit and push changes
+      - name: Commit and push to dev branch
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
           if git diff --quiet ${{ env.FABRIC_VAR_FILE_PATH }}; then
             echo "No changes to variables.json"
           else
             git add ${{ env.FABRIC_VAR_FILE_PATH }}
             git commit -m "chore: update variables.json for test environment [skip ci]"
-            git push
           fi
+          git push origin dev
 
   # ══════════════════════════════════════════════════════════════
   # 6. Wait for Test Approval
@@ -203,24 +201,42 @@ jobs:
     with:
       workspace-id: ${{ vars.TEST_WORKSPACE_ID }}
       fabric-connection-id: ${{ vars.FABRIC_CONNECTION_ID }}
-      git-branch: ${{ github.ref_name }}
+      git-branch: dev
     secrets:
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
       client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
 
   # ══════════════════════════════════════════════════════════════
-  # 8. Update Variables for Production Environment
+  # 8. Merge to Test Branch and Update Prod Variables
   # ══════════════════════════════════════════════════════════════
   update-prod-variables:
     name: "8. Update Prod Variables"
     needs: [deploy-to-test]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout test branch
         uses: actions/checkout@v4
         with:
+          ref: test
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge dev branch into test (prefer ours on conflict)
+        run: |
+          git fetch origin dev
+          git merge origin/dev --no-edit || {
+            # Handle all conflicts using "ours" strategy (prefer current branch - test)
+            echo "Merge conflicts detected. Resolving with 'ours' strategy..."
+            git checkout --ours .
+            git add .
+            git commit --no-edit || true
+          }
 
       - name: Update variables.json for Production
         env:
@@ -233,18 +249,15 @@ jobs:
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
-      - name: Commit and push changes
+      - name: Commit and push to test branch
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
           if git diff --quiet ${{ env.FABRIC_VAR_FILE_PATH }}; then
             echo "No changes to variables.json"
           else
             git add ${{ env.FABRIC_VAR_FILE_PATH }}
             git commit -m "chore: update variables.json for production environment [skip ci]"
-            git push
           fi
+          git push origin test
 
   # ══════════════════════════════════════════════════════════════
   # 9. Wait for Production Approval
@@ -263,16 +276,46 @@ jobs:
           issue-body: "Please approve deployment to Production workspace"
 
   # ══════════════════════════════════════════════════════════════
-  # 10. Deploy to Production Workspace
+  # 10. Merge to Main and Deploy to Production
   # ══════════════════════════════════════════════════════════════
-  deploy-to-prod:
-    name: "10. Deploy to Production"
+  merge-to-main:
+    name: "10. Merge to Main"
     needs: [wait-for-prod-approval]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge test branch into main (prefer ours on conflict)
+        run: |
+          git fetch origin test
+          git merge origin/test --no-edit || {
+            # Handle all conflicts using "ours" strategy (prefer current branch - main)
+            # This ensures production gets the latest changes from test
+            echo "Merge conflicts detected. Resolving with 'ours' strategy..."
+            git checkout --ours .
+            git add .
+            git commit --no-edit || true
+          }
+          git push origin main
+
+  deploy-to-prod:
+    name: "11. Deploy to Production"
+    needs: [merge-to-main]
     uses: ./.github/workflows/update-workspace-git.yml
     with:
       workspace-id: ${{ vars.PROD_WORKSPACE_ID }}
       fabric-connection-id: ${{ vars.FABRIC_CONNECTION_ID }}
-      git-branch: ${{ github.ref_name }}
+      git-branch: main
     secrets:
       tenant-id: ${{ secrets.AZURE_TENANT_ID }}
       client-id: ${{ secrets.AZURE_CLIENT_ID }}
