@@ -11,6 +11,7 @@ permissions:
   pull-requests: write
   issues: write
 
+
 env:
   WS_PREFIX: feat
   VAR_PREFIX: ENV_VARS
@@ -80,16 +81,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Update variables.json for Dev
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           chmod +x ./.github/workflows/scripts/update_variables.sh
           ./.github/workflows/scripts/update_variables.sh \
             -p ${{ env.VAR_PREFIX }} \
-            -e DEV \
+            -e dev \
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
@@ -98,12 +99,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if [[ -n $(git status --porcelain) ]]; then
+          if git diff --quiet ${{ env.FABRIC_VAR_FILE_PATH }}; then
+            echo "No changes to variables.json"
+          else
             git add ${{ env.FABRIC_VAR_FILE_PATH }}
             git commit -m "chore: update variables.json for dev environment [skip ci]"
             git push
-          else
-            echo "No changes to commit"
           fi
 
   # ══════════════════════════════════════════════════════════════
@@ -150,16 +151,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Update variables.json for Test
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           chmod +x ./.github/workflows/scripts/update_variables.sh
           ./.github/workflows/scripts/update_variables.sh \
             -p ${{ env.VAR_PREFIX }} \
-            -e TEST \
+            -e test \
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
@@ -168,12 +169,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if [[ -n $(git status --porcelain) ]]; then
+          if git diff --quiet ${{ env.FABRIC_VAR_FILE_PATH }}; then
+            echo "No changes to variables.json"
+          else
             git add ${{ env.FABRIC_VAR_FILE_PATH }}
             git commit -m "chore: update variables.json for test environment [skip ci]"
             git push
-          else
-            echo "No changes to commit"
           fi
 
   # ══════════════════════════════════════════════════════════════
@@ -219,16 +220,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Update variables.json for Production
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           chmod +x ./.github/workflows/scripts/update_variables.sh
           ./.github/workflows/scripts/update_variables.sh \
             -p ${{ env.VAR_PREFIX }} \
-            -e PROD \
+            -e prod \
             -f ${{ env.FABRIC_VAR_FILE_PATH }} \
             -r ${{ github.repository }}
 
@@ -237,12 +238,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if [[ -n $(git status --porcelain) ]]; then
+          if git diff --quiet ${{ env.FABRIC_VAR_FILE_PATH }}; then
+            echo "No changes to variables.json"
+          else
             git add ${{ env.FABRIC_VAR_FILE_PATH }}
             git commit -m "chore: update variables.json for production environment [skip ci]"
             git push
-          else
-            echo "No changes to commit"
           fi
 
   # ══════════════════════════════════════════════════════════════
