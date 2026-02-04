@@ -1,26 +1,9 @@
 # Fabric notebook source
 
-# METADATA ********************
-
-# META {
-# META   "kernel_info": {
-# META     "name": "synapse_pyspark"
-# META   },
-# META   "dependencies": {}
-# META }
 
 # CELL ********************
 
 # Fabric notebook source # Demo 1
-
-# METADATA ********************
-
-# META {
-# META   "kernel_info": {
-# META     "name": "synapse_pyspark"
-# META   },
-# META   "dependencies": {}
-# META }
 
 # CELL ********************
 
@@ -34,14 +17,6 @@ print("UTC now:", datetime.now(timezone.utc).isoformat())
 print("Python:", platform.python_version())
 print("Platform:", platform.platform())
 print("Sample env var keys:", sorted(list(os.environ.keys()))[:10])
-
-
-# METADATA ********************
-
-# META {
-# META   "language": "python",
-# META   "language_group": "synapse_pyspark"
-# META }
 
 
 # METADATA ********************
