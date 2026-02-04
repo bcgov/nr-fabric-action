@@ -21,9 +21,8 @@ SAFE_BRANCH="${BRANCH//\//-}"
 NAME="${PREFIX}-${SAFE_BRANCH}"
 
 echo "══════════════════════════════════════════════════════════════"
-echo "Workspace: ${NAME}"
-echo "Repository: ${REPO_OWNER}/${REPO_NAME}"
-echo "Branch: ${BRANCH}"
+echo "Target Workspace: '${NAME}'"
+echo "Repo: ${REPO_OWNER}/${REPO_NAME} (Branch: ${BRANCH})"
 echo "══════════════════════════════════════════════════════════════"
 
 # ══════════════════════════════════════════════════════════════
@@ -31,7 +30,7 @@ echo "════════════════════════�
 # ══════════════════════════════════════════════════════════════
 
 authenticate_azure() {
-    echo "Logging into Azure..."
+    echo "Logging into Azure via Service Principal..." >&2
     az login --service-principal \
         --username "$CLIENT_ID" \
         --password "$CLIENT_SECRET" \
@@ -41,7 +40,7 @@ authenticate_azure() {
 }
 
 get_fabric_token() {
-    echo "Fetching Fabric token..."
+    echo "Fetching Fabric Access Token..." >&2
     az account get-access-token \
         --resource https://api.fabric.microsoft.com \
         --query accessToken \
@@ -66,7 +65,7 @@ create_workspace() {
     local capacity="$2"
     local token="$3"
     
-    echo "Creating workspace '${name}'..."
+    echo "Workspace not found. Creating '${name}' on capacity ${capacity}..." >&2
     
     local http_response=$(curl -w "\n%{http_code}" -s -X POST \
         -H "Authorization: Bearer ${token}" \
@@ -84,7 +83,7 @@ create_workspace() {
     fi
     
     local ws_id=$(echo "$create_resp" | jq -r '.id')
-    echo "✅ Created workspace ${ws_id}"
+    echo "✅ Created workspace ${ws_id}" >&2
     echo "$ws_id"
 }
 
@@ -95,7 +94,6 @@ create_workspace() {
 build_git_payload() {
     jq -n \
         --arg owner "$REPO_OWNER" \
-        --arg project "$REPO_NAME" \
         --arg repo "$REPO_NAME" \
         --arg branch "$BRANCH" \
         --arg connId "$FABRIC_CONNECTION_ID" \
@@ -103,7 +101,6 @@ build_git_payload() {
             gitProviderDetails: {
                 gitProviderType: "GitHub",
                 ownerName: $owner,
-                projectName: $project,
                 repositoryName: $repo,
                 branchName: $branch,
                 directoryName: "/"
@@ -119,8 +116,8 @@ connect_to_git() {
     local ws_id="$1"
     local token="$2"
     
-    echo "Connecting workspace to GitHub..."
-    echo "Connection ID: ${FABRIC_CONNECTION_ID}"
+    echo "Connecting workspace to GitHub Repository..." >&2
+    echo "Connection ID: ${FABRIC_CONNECTION_ID}" >&2
     
     local json_payload=$(build_git_payload)
     
@@ -134,14 +131,14 @@ connect_to_git() {
     local connect_resp=$(echo "$http_response" | sed '$d')
     
     if [[ "$http_code" =~ ^2[0-9]{2}$ ]]; then
-        echo "✅ Successfully connected to Git repository"
+        echo "✅ Successfully connected to Git repository" >&2
     elif [[ -n "$connect_resp" ]]; then
         local error_code=$(echo "$connect_resp" | jq -r '.errorCode // .error.code // empty' 2>/dev/null || echo "")
         
         if [[ "$error_code" == "WorkspaceAlreadyConnectedToGit" || 
               "$error_code" == "GitIntegrationAlreadyConnected" || 
               "$error_code" == "GitConnectionAlreadyExists" ]]; then
-            echo "⚠️  Git integration already exists (skipping)"
+            echo "⚠️  Git integration already exists (Skipping)" >&2
         else
             echo "❌ Failed to connect Git (HTTP $http_code):" >&2
             echo "$connect_resp" >&2
@@ -159,23 +156,23 @@ connect_to_git() {
 
 main() {
     authenticate_azure
-    local fabric_token=$(get_fabric_token)
+    FABRIC_TOKEN=$(get_fabric_token)
     
-    local ws_id=$(get_workspace_id "$NAME" "$fabric_token")
+    WS_ID=$(get_workspace_id "$NAME" "$FABRIC_TOKEN")
     
-    if [[ -z "$ws_id" || "$ws_id" == "null" ]]; then
-        ws_id=$(create_workspace "$NAME" "$CAPACITY_ID" "$fabric_token")
+    if [[ -z "$WS_ID" || "$WS_ID" == "null" ]]; then
+        WS_ID=$(create_workspace "$NAME" "$CAPACITY_ID" "$FABRIC_TOKEN")
     else
-        echo "✅ Re-using existing workspace ${ws_id}"
+        echo "✅ Re-using existing workspace ${WS_ID}" >&2
     fi
     
-    echo "workspace_id=$ws_id" >> "$GITHUB_OUTPUT"
+    echo "workspace_id=$WS_ID" >> "$GITHUB_OUTPUT"
     
-    connect_to_git "$ws_id" "$fabric_token"
+    connect_to_git "$WS_ID" "$FABRIC_TOKEN"
     
-    echo ""
-    echo "✅ Fabric workspace ready"
-    echo "   https://app.fabric.microsoft.com/groups/${ws_id}"
+    echo "" >&2
+    echo "All done! Fabric workspace ready." >&2
+    echo "https://app.fabric.microsoft.com/groups/${WS_ID}" >&2
 }
 
 main "$@"
