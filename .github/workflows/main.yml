@@ -111,6 +111,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: dev
 
       - name: Set commit message (from user commit subject)
         id: commitmsg
@@ -148,7 +150,7 @@ jobs:
           git commit -m "${{ steps.commitmsg.outputs.message }}"
 
           git pull origin dev
-          git push
+          git push origin dev
 
   # ══════════════════════════════════════════════════════════════
   # 3. Deploy to Dev (auto)
