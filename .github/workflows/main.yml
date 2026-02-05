@@ -147,7 +147,7 @@ jobs:
 
           git commit -m "${{ steps.commitmsg.outputs.message }}"
 
-          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git pull origin dev
           git push
 
   # ══════════════════════════════════════════════════════════════
@@ -233,7 +233,7 @@ jobs:
 
           git commit -m "${{ steps.commitmsg.outputs.message }}"
 
-          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git pull origin test
           git push
 
   # ══════════════════════════════════════════════════════════════
@@ -325,7 +325,7 @@ jobs:
           fi
 
           git commit -m "${{ steps.commitmsg.outputs.message }}"
-          git pull --rebase origin main
+          git pull origin main
           git push origin main
 
   deploy-to-prod:
