@@ -195,6 +195,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: test
 
       - name: Set commit message (from user commit subject)
         id: commitmsg

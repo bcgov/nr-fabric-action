@@ -7,7 +7,7 @@
 
 # CELL ********************
 
-# Welcome to your new notebook # test 6
+# Welcome to your new notebook # test 7
 # Type here in the cell editor to add code!
 import os, platform
 from datetime import datetime, timezone
